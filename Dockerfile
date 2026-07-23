@@ -17,9 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 
-RUN mkdir -p /app/certs/extra
-COPY certs/russian_trusted_root.cer /app/certs/extra/russian_trusted_root_ca.crt
-COPY certs/russian_trusted_sub.cer /app/certs/extra/russian_trusted_sub_ca.crt
+RUN mkdir -p /app/certs
+COPY certs/russian_trusted_root.cer /app/certs/russian_trusted_root_ca.crt
+COPY certs/russian_trusted_sub.cer /app/certs/russian_trusted_sub_ca.crt
 RUN python -m app.ssl_bundle
 
 
