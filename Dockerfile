@@ -16,12 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-
-RUN mkdir -p /app/certs
-COPY certs/russian_trusted_root.cer /app/certs/russian_trusted_root_ca.crt
-COPY certs/russian_trusted_sub.cer /app/certs/russian_trusted_sub_ca.crt
-RUN python -m app.ssl_bundle
-
+RUN mkdir -p /app/certs \
+    && curl -o /app/certs/russian_trusted_root_ca.crt http://company.rt.ru/cdp/rootca_ssl_rsa2022.crt \
+    && curl -o /app/certs/russian_trusted_sub_ca.crt http://company.rt.ru/cdp/subca_ssl_rsa2022.crt \
+    && python -m app.ssl_bundle
+# ---------------------------------------------------
 
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/data \
