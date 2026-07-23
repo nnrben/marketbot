@@ -400,11 +400,13 @@ class GridBotInstance:
         for day in days:
             start = self._parse_api_dt(day.get("startTime"))
             end = self._parse_api_dt(day.get("endTime"))
+            evening_start = self._parse_api_dt(day.get("eveningStartTime"))
+            evening_end = self._parse_api_dt(day.get("eveningEndTime"))
             date = self._parse_api_dt(day.get("date"))
-            # Точное попадание в текущую сессию.
             if start and end and start <= now <= end:
                 return day
-            # Иначе запоминаем ближайший будущий торговый день.
+            if evening_start and evening_end and evening_start <= now <= evening_end:
+                return day
             candidate_time = start or date
             if day.get("isTradingDay") and candidate_time and candidate_time >= now:
                 if best is None:
