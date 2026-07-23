@@ -5,5 +5,4 @@ aiosqlite==0.20.0
 pydantic==2.10.6
 pydantic-settings==2.7.1
 certifi==2024.12.14
-# Проверка подписи Ed25519 для lease лицензии (app/license.py).
 cryptography==44.0.0
