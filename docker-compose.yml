@@ -1,4 +1,3 @@
-
 services:
   grid-bot:
     build: .
@@ -7,7 +6,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-
+      - ./certs:/app/certs
+      - grid-bot-data:/app/data
     restart: unless-stopped
 
 volumes:
