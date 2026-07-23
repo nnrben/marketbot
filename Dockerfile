@@ -30,10 +30,14 @@ RUN mkdir -p /app/certs/extra \
         || echo "WARNING: russian_trusted_sub_ca not downloaded") \
     && python -m app.ssl_bundle
 
-# Запуск от непривилегированного пользователя.
+# Запуск от непривилегированного пользователя. Каталоги данных и сертификатов
+# делаем записываемыми при любом UID: некоторые хостинги (Timeweb Cloud Apps и
+# т.п.) запускают контейнер под произвольным пользователем, не совпадающим с
+# appuser, и без этого SQLite и сборка CA bundle падают на Permission denied.
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /app/data \
-    && chown -R appuser:appuser /app/data /app/certs
+    && chown -R appuser:appuser /app/data /app/certs \
+    && chmod -R 0777 /app/data /app/certs
 USER appuser
 
 EXPOSE 8000
