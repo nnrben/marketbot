@@ -1,4 +1,3 @@
-
 import logging
 import os
 import shutil
@@ -9,13 +8,14 @@ import certifi
 logger = logging.getLogger(__name__)
 
 DEFAULT_BUNDLE_PATH = os.environ.get("CA_BUNDLE_PATH", "/app/certs/ca-bundle.crt")
+
+EXTRA_CERTS_DIR = os.environ.get("EXTRA_CERTS_DIR", "/app/certs/extra")
 _CERT_EXTENSIONS = (".crt", ".pem", ".cer")
 
 
-def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
+def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH, extra_dir: str = EXTRA_CERTS_DIR) -> str:
 
     bundle_dir = os.path.dirname(bundle_path) or "."
-    extra_dir = os.path.join(bundle_dir, "extra")
     os.makedirs(bundle_dir, exist_ok=True)
 
     tmp_path = bundle_path + ".tmp"
@@ -47,12 +47,12 @@ def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
     return bundle_path
 
 
-def ensure_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
+def ensure_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH, extra_dir: str = EXTRA_CERTS_DIR) -> str:
 
     if os.path.isfile(bundle_path) and os.path.getsize(bundle_path) > 0:
         return bundle_path
     try:
-        return build_ca_bundle(bundle_path)
+        return build_ca_bundle(bundle_path, extra_dir)
     except OSError as e:
         logger.warning(
             "Не удалось собрать CA bundle (%s): %s — используется набор certifi",
