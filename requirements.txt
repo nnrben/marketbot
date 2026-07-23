@@ -1,0 +1,9 @@
+fastapi==0.115.12
+uvicorn==0.34.0
+httpx==0.28.1
+aiosqlite==0.20.0
+pydantic==2.10.6
+pydantic-settings==2.7.1
+certifi==2024.12.14
+# Проверка подписи Ed25519 для lease лицензии (app/license.py).
+cryptography==44.0.0

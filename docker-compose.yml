@@ -1,0 +1,16 @@
+# Локальный запуск: скопируйте .env.example в .env, заполните переменные
+# и выполните `docker compose up --build`.
+services:
+  grid-bot:
+    build: .
+    container_name: t-invest-grid-bot
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Локально состояние бота сохраняется между перезапусками.
+      - grid-bot-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  grid-bot-data:
