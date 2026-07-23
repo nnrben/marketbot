@@ -1,5 +1,4 @@
 
-import asyncio
 import base64
 import json
 import logging
@@ -7,9 +6,8 @@ import os
 import secrets
 import socket
 import time
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
-import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -23,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 EMBEDDED_PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAFAEHY72KUJHLZq3mrBV9mUPToRmZQre3Ja8BGsi66Xc="
 
-LEASE_VERSION = 1
+LEASE_VERSION = 2
 _CLOCK_SKEW = 60
 
 
@@ -81,7 +79,7 @@ class LicenseManager:
             with open(self._lease_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             payload = self._verify_lease(
-                data["lease"], data["sig"], expect_nonce=data.get("nonce")
+                data["lease"], data["sig"], expect_sub=data.get("sub")
             )
             if payload is not None and time.time() < payload["exp"] - _CLOCK_SKEW:
                 self._apply_payload(payload, data.get("reason"))
@@ -94,14 +92,9 @@ class LicenseManager:
         except Exception as e:
             logger.warning("Лицензия: не удалось прочитать кэш lease: %s", e)
 
-    def _save_cached(self, data: dict, nonce: str) -> None:
+    def _save_cached(self, lease_b64: str, sig_b64: str, sub: str) -> None:
         try:
-            payload = {
-                "lease": data["lease"],
-                "sig": data["sig"],
-                "reason": data.get("reason"),
-                "nonce": nonce,
-            }
+            payload = {"lease": lease_b64, "sig": sig_b64, "sub": sub}
             tmp = self._lease_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
@@ -112,7 +105,7 @@ class LicenseManager:
     # --- проверка подписи ---
 
     def _verify_lease(
-        self, lease_b64: str, sig_b64: str, expect_nonce: Optional[str]
+        self, lease_b64: str, sig_b64: str, expect_sub: Optional[str]
     ) -> Optional[dict]:
         try:
             lease_bytes = _b64url_decode(lease_b64)
@@ -133,11 +126,8 @@ class LicenseManager:
         if payload.get("v") != LEASE_VERSION:
             logger.error("Лицензия: несовместимая версия lease: %s", payload.get("v"))
             return None
-        if settings.license_id and payload.get("license_id") != settings.license_id:
-            logger.error("Лицензия: lease выдан для другого license_id")
-            return None
-        if expect_nonce is not None and payload.get("nonce") != expect_nonce:
-            logger.error("Лицензия: nonce lease не совпадает (возможен повтор ответа)")
+        if expect_sub is not None and payload.get("sub") != expect_sub:
+            logger.error("Лицензия: lease привязан к другому серверу (sub не совпадает)")
             return None
         return payload
 
@@ -182,115 +172,37 @@ class LicenseManager:
             "expires_in_sec": max(0, int(self._exp - time.time())) if self._exp else None,
         }
 
-    # --- сетевое обновление ---
+    @property
+    def fingerprint(self) -> str:
+        return self._fingerprint
 
-    async def fetch(self, stats: Optional[dict] = None) -> None:
-        """Один heartbeat к платформе: отправляет статистику, получает и
-        применяет свежий lease. Никогда не бросает исключение."""
-        if not self.configured:
-            if self.enforced and not self._warned_unconfigured:
-                self._warned_unconfigured = True
-                logger.warning(
-                    "Лицензия НЕ настроена (нужны LICENSE_ID, LICENSE_SECRET, "
-                    "DEFLOW_API_URL), а LICENSE_ENFORCE=true — бот будет на паузе. "
-                    "Получите лицензию в личном кабинете deflow и задайте переменные "
-                    "окружения. Для локального теста без платформы: LICENSE_ENFORCE=false."
-                )
-            return
-
-        # Ленивый импорт CA-бандла (см. примечание о циклическом импорте выше).
-        from app.services.grid_bot.config import CA_BUNDLE_PATH
-
-        nonce = secrets.token_urlsafe(16)
-        url = settings.deflow_api_url.rstrip("/") + "/api/bot/telemetry"
-        body = {
-            "license_id": settings.license_id,
-            "nonce": nonce,
-            "ts": int(time.time()),
-            "fingerprint": self._fingerprint,
-            "stats": stats or {},
-        }
-        try:
-            async with httpx.AsyncClient(verify=CA_BUNDLE_PATH, timeout=15.0) as client:
-                resp = await client.post(
-                    url,
-                    json=body,
-                    headers={"Authorization": f"Bearer {settings.license_secret}"},
-                )
-        except Exception as e:
-            left = max(0, int((self._exp - time.time()) / 60)) if self._exp else 0
-            logger.warning(
-                "Лицензия: платформа недоступна (%s). Бот доживает на текущем "
-                "lease ещё ~%d мин.", e, left,
-            )
-            return
-
-        if resp.status_code in (401, 403):
-            # Лицензия недействительна/отозвана — сразу закрываемся (fail-closed).
-            logger.error(
-                "Лицензия: платформа отклонила heartbeat (%s). Проверьте "
-                "LICENSE_ID/LICENSE_SECRET. Бот встаёт на паузу.", resp.status_code,
-            )
-            self._status = "suspended"
-            self._exp = 0.0
-            self._reason = "rejected"
-            return
-        if resp.status_code == 429:
-            logger.info("Лицензия: heartbeat слишком часто (429) — пропускаю.")
-            return
-        if resp.status_code != 200:
-            logger.warning(
-                "Лицензия: неожиданный ответ платформы %s — сохраняю текущий lease.",
-                resp.status_code,
-            )
-            return
-
-        try:
-            data = resp.json()
-        except Exception:
-            logger.warning("Лицензия: ответ платформы не JSON.")
-            return
-
-        payload = self._verify_lease(data.get("lease", ""), data.get("sig", ""), nonce)
+    def apply_db_lease(
+        self, lease_b64: str, sig_b64: str, server_key: str
+    ) -> bool:
+        if not lease_b64 or not sig_b64:
+            self.mark_suspended("no_lease")
+            return False
+        payload = self._verify_lease(lease_b64, sig_b64, server_key)
         if payload is None:
-            # Подпись/nonce не сошлись — НЕ применяем, оставляем прежнее состояние.
-            return
-
+            return False
         prev_status = self._status
-        self._apply_payload(payload, data.get("reason"))
-        self._save_cached(data, nonce)
+        self._apply_payload(payload, None)
+        self._save_cached(lease_b64, sig_b64, server_key)
         if prev_status != self._status:
             logger.info(
-                "Лицензия: статус %s -> %s (тариф=%s, причина=%s, действует %d мин)",
-                prev_status, self._status, self._tariff, self.reason,
+                "Лицензия: статус %s -> %s (тариф=%s, действует %d мин)",
+                prev_status, self._status, self._tariff,
                 max(0, int((self._exp - time.time()) / 60)),
             )
+        return True
+
+    def mark_suspended(self, reason: str) -> None:
+        if self._status != "suspended" or self._reason != reason:
+            logger.info("Лицензия: перевод в suspended (%s)", reason)
+        self._status = "suspended"
+        self._exp = 0.0
+        self._reason = reason
 
 
 # Единственный экземпляр на процесс.
 license_manager = LicenseManager()
-
-
-async def license_loop(
-    stats_provider: Callable[[], Awaitable[dict]],
-    on_change: Optional[Callable[[bool], Awaitable[None]]] = None,
-) -> None:
-    """Фоновый цикл: раз в LICENSE_POLL_SECONDS обновляет лицензию, отдавая
-    свежую статистику, и уведомляет об изменении активности (для мгновенной
-    паузы/возобновления ботов)."""
-    interval = max(60, int(settings.license_poll_seconds))
-    while True:
-        prev_active = license_manager.is_active()
-        try:
-            stats = await stats_provider()
-        except Exception as e:
-            logger.warning("Лицензия: не удалось собрать статистику: %s", e)
-            stats = {}
-        await license_manager.fetch(stats)
-        now_active = license_manager.is_active()
-        if on_change is not None and now_active != prev_active:
-            try:
-                await on_change(now_active)
-            except Exception as e:
-                logger.error("Лицензия: ошибка обработчика смены статуса: %s", e)
-        await asyncio.sleep(interval)

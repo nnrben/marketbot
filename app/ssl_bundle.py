@@ -1,13 +1,4 @@
-"""Сборка доверенного набора корневых сертификатов (CA bundle).
 
-API Т-Инвестиций (invest-public-api.tbank.ru) может использовать сертификаты
-Russian Trusted CA (НУЦ Минцифры), которых нет в стандартных наборах.
-Итоговый bundle = сертификаты certifi + все *.crt/*.pem из каталога
-`<папка bundle>/extra` (туда Dockerfile кладёт Russian Trusted Root/Sub CA).
-
-Модуль намеренно не зависит от настроек приложения, чтобы его можно было
-запускать на этапе сборки образа: `python -m app.ssl_bundle`.
-"""
 import logging
 import os
 import shutil
@@ -22,7 +13,7 @@ _CERT_EXTENSIONS = (".crt", ".pem", ".cer")
 
 
 def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
-    """Собирает bundle заново. Возвращает путь к собранному файлу."""
+
     bundle_dir = os.path.dirname(bundle_path) or "."
     extra_dir = os.path.join(bundle_dir, "extra")
     os.makedirs(bundle_dir, exist_ok=True)
@@ -57,9 +48,7 @@ def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
 
 
 def ensure_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
-    """Возвращает путь к готовому bundle; при невозможности собрать —
-    откатывается на стандартный набор certifi (приложение продолжит работать,
-    если сервер брокера использует общепризнанный сертификат)."""
+
     if os.path.isfile(bundle_path) and os.path.getsize(bundle_path) > 0:
         return bundle_path
     try:
