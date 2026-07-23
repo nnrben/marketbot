@@ -1,44 +1,77 @@
+"""Сборка доверенного набора корневых сертификатов (CA bundle).
+
+API Т-Инвестиций (invest-public-api.tbank.ru) может использовать сертификаты
+Russian Trusted CA (НУЦ Минцифры), которых нет в стандартных наборах.
+Итоговый bundle = сертификаты certifi + все *.crt/*.pem из каталога
+`<папка bundle>/extra` (туда Dockerfile кладёт Russian Trusted Root/Sub CA).
+
+Модуль намеренно не зависит от настроек приложения, чтобы его можно было
+запускать на этапе сборки образа: `python -m app.ssl_bundle`.
+"""
 import logging
 import os
 import shutil
 import sys
-import certifi
-logger = logging.getLogger(__name__)
-DEFAULT_BUNDLE_PATH = os.environ.get('CA_BUNDLE_PATH', '/app/certs/ca-bundle.crt')
-_CERT_EXTENSIONS = ('.crt', '.pem', '.cer')
 
-def build_ca_bundle(bundle_path: str=DEFAULT_BUNDLE_PATH) -> str:
-    bundle_dir = os.path.dirname(bundle_path) or '.'
-    extra_dir = os.path.join(bundle_dir, 'extra')
+import certifi
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_BUNDLE_PATH = os.environ.get("CA_BUNDLE_PATH", "/app/certs/ca-bundle.crt")
+_CERT_EXTENSIONS = (".crt", ".pem", ".cer")
+
+
+def build_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
+    """Собирает bundle заново. Возвращает путь к собранному файлу."""
+    bundle_dir = os.path.dirname(bundle_path) or "."
+    extra_dir = os.path.join(bundle_dir, "extra")
     os.makedirs(bundle_dir, exist_ok=True)
-    tmp_path = bundle_path + '.tmp'
+
+    tmp_path = bundle_path + ".tmp"
     extra_count = 0
-    with open(tmp_path, 'wb') as out:
-        with open(certifi.where(), 'rb') as base:
+    with open(tmp_path, "wb") as out:
+        with open(certifi.where(), "rb") as base:
             shutil.copyfileobj(base, out)
         if os.path.isdir(extra_dir):
             for name in sorted(os.listdir(extra_dir)):
                 if not name.lower().endswith(_CERT_EXTENSIONS):
                     continue
                 path = os.path.join(extra_dir, name)
-                out.write(b'\n')
-                with open(path, 'rb') as extra:
+                out.write(b"\n")
+                with open(path, "rb") as extra:
                     shutil.copyfileobj(extra, out)
                 extra_count += 1
     os.replace(tmp_path, bundle_path)
-    logger.info('CA bundle собран: %s (дополнительных сертификатов: %d)', bundle_path, extra_count)
+    logger.info(
+        "CA bundle собран: %s (дополнительных сертификатов: %d)",
+        bundle_path, extra_count,
+    )
     if extra_count == 0:
-        logger.warning('Дополнительные сертификаты (Russian Trusted CA) не найдены в %s. Если TLS-соединение с API Т-Инвестиций не устанавливается, положите их туда и пересоберите образ.', extra_dir)
+        logger.warning(
+            "Дополнительные сертификаты (Russian Trusted CA) не найдены в %s. "
+            "Если TLS-соединение с API Т-Инвестиций не устанавливается, "
+            "положите их туда и пересоберите образ.",
+            extra_dir,
+        )
     return bundle_path
 
-def ensure_ca_bundle(bundle_path: str=DEFAULT_BUNDLE_PATH) -> str:
+
+def ensure_ca_bundle(bundle_path: str = DEFAULT_BUNDLE_PATH) -> str:
+    """Возвращает путь к готовому bundle; при невозможности собрать —
+    откатывается на стандартный набор certifi (приложение продолжит работать,
+    если сервер брокера использует общепризнанный сертификат)."""
     if os.path.isfile(bundle_path) and os.path.getsize(bundle_path) > 0:
         return bundle_path
     try:
         return build_ca_bundle(bundle_path)
     except OSError as e:
-        logger.warning('Не удалось собрать CA bundle (%s): %s — используется набор certifi', bundle_path, e)
+        logger.warning(
+            "Не удалось собрать CA bundle (%s): %s — используется набор certifi",
+            bundle_path, e,
+        )
         return certifi.where()
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     build_ca_bundle(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BUNDLE_PATH)
