@@ -34,15 +34,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/health',timeout=4)" || exit 1
 
-CMD ["python", "-m", "app.main"]RUN useradd --create-home --uid 10001 appuser \
-    && mkdir -p /app/data \
-    && chown -R appuser:appuser /app/data /app/certs \
-    && chmod -R 0777 /app/data /app/certs
-USER appuser
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8000')+'/health',timeout=4)" || exit 1
-
 CMD ["python", "-m", "app.main"]
