@@ -68,6 +68,16 @@ def _load_or_create_server_key() -> str:
         return "srv_" + secrets.token_hex(16)
 
 
+def _save_server_key(value: str) -> None:
+    path = os.path.join(settings.data_dir, "server_key")
+    try:
+        os.makedirs(settings.data_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(value)
+    except Exception as e:
+        logger.warning("bot_market: не удалось сохранить server_key локально: %s", e)
+
+
 async def _verify_broker_token() -> Optional[bool]:
     if not settings.tinkoff_token:
         return False
@@ -120,13 +130,24 @@ class MarketSync:
                 INSERT INTO bot_servers (server_key, url, token_configured, status, version, last_seen_at, updated_at)
                 VALUES ($1, $2, $3, 'online', $4, now(), now())
                 ON CONFLICT (url) DO UPDATE SET
-                    server_key = EXCLUDED.server_key,
+                    -- server_key НЕ перезаписываем: сохраняем тот, что уже есть
+                    -- в БД для этого url (COALESCE на случай, если он там
+                    -- почему-то NULL/пуст). Это важно, потому что server_key
+                    -- также хранится локально в файле внутри контейнера
+                    -- (DATA_DIR/server_key), а DATA_DIR обычно не переживает
+                    -- рестарт контейнера (эфемерная ФС). Если бы мы каждый раз
+                    -- перезаписывали server_key новым локально сгенерированным
+                    -- значением, то lease, ранее выданный платформой bot_market
+                    -- и подписанный под СТАРЫМ server_key, переставал бы
+                    -- проходить проверку подписи ("lease привязан к другому
+                    -- серверу") при каждом рестарте контейнера.
+                    server_key = COALESCE(bot_servers.server_key, EXCLUDED.server_key),
                     token_configured = EXCLUDED.token_configured,
                     status = 'online',
                     version = EXCLUDED.version,
                     last_seen_at = now(),
                     updated_at = now()
-                RETURNING id
+                RETURNING id, server_key
                 """,
                 self.server_key,
                 self.url,
@@ -134,6 +155,16 @@ class MarketSync:
                 APP_VERSION,
             )
             self.server_id = int(row["id"])
+            db_server_key = row["server_key"]
+            if db_server_key and db_server_key != self.server_key:
+
+                logger.info(
+                    "bot_market: используем server_key из БД (%s) вместо "
+                    "локально сгенерированного (%s)",
+                    db_server_key, self.server_key,
+                )
+                self.server_key = db_server_key
+                _save_server_key(db_server_key)
         logger.info(
             "bot_market: сервер зарегистрирован (url=%s, id=%s)", self.url, self.server_id
         )
